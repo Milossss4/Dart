@@ -1,4 +1,4 @@
-import { useNavigation, useRouter } from 'expo-router'; // 1. Dodano useNavigation
+import { useNavigation, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleProp, StyleSheet, Text, TextStyle, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,6 +23,16 @@ const getCheckoutSteps = (score: number, isDoubleOut: boolean): string[] => {
         return `${prefix}${val}`;
     };
 
+    // Helper do sprawdzania czy liczba > 20 może być rzucona jako D lub T
+    const formatIfPossible = (val: number): string => {
+        if (val <= 20) return val.toString();
+        if (val === 25) return '25';
+        if (val === 50) return 'BULL';
+        if (val <= 60 && val % 3 === 0) return formatThrow(val / 3, 3);
+        if (val <= 40 && val % 2 === 0) return formatThrow(val / 2, 2);
+        return val.toString(); // Zwraca np. "23" jeśli nie da się sformatować (sytuacja rzadka, ale możliwa przy Single Out)
+    };
+
     if (!isDoubleOut) {
         if (score <= 20) return [score.toString()];
         if (score === 25) return ['25'];
@@ -33,18 +43,27 @@ const getCheckoutSteps = (score: number, isDoubleOut: boolean): string[] => {
         if (score > 60) {
             const steps = [];
             let current = score;
+            
+            // Zbijamy punktami T20 dopóki się da
             while (current > 60 && steps.length < 3) {
                 steps.push('T20');
                 current -= 60;
             }
+
             if (current > 0 && steps.length < 3) {
+                // Czy resztę da się skończyć 1 rzutem?
                 if (current <= 20) steps.push(current.toString());
                 else if (current <= 40 && current % 2 === 0) steps.push(formatThrow(current / 2, 2));
                 else if (current <= 60 && current % 3 === 0) steps.push(formatThrow(current / 3, 3));
+                else if (current === 25) steps.push('25');
+                else if (current === 50) steps.push('BULL');
                 else {
-                    if (steps.length === 1) {
+                    // Reszta jest trudna (np. 41, 43), musimy rozbić na 2 rzuty
+                    if (steps.length === 1) { // Mamy miejsce na 2 rzuty
                         const first = current - 20;
-                        steps.push(first.toString());
+                        // --- POPRAWKA TUTAJ ---
+                        // Zamiast first.toString() używamy formatowania
+                        steps.push(formatIfPossible(first)); 
                         steps.push('20');
                     } else {
                         steps.push('?');
@@ -54,10 +73,13 @@ const getCheckoutSteps = (score: number, isDoubleOut: boolean): string[] => {
             return steps;
         }
 
+        // Obsługa niskich wyników, które nie są D lub T (np. 23)
         if (score <= 60) {
             if (score > 20) {
                 const first = score - 20;
-                return [first.toString(), '20'];
+                // --- I TUTAJ TEŻ ---
+                // Np. dla 41 (Single Out) -> T7 (21) + 20
+                return [formatIfPossible(first), '20'];
             }
             if (score > 10) {
                 const first = score - 10;
@@ -67,6 +89,7 @@ const getCheckoutSteps = (score: number, isDoubleOut: boolean): string[] => {
         }
     }
 
+    // --- Reszta logiki Double Out bez zmian ---
     const doubles = Array.from({ length: 20 }, (_, i) => 20 - i).map(v => ({ val: v * 2, lbl: `D${v}` }));
     doubles.unshift({ val: 50, lbl: 'BULL' });
 
@@ -102,15 +125,13 @@ const getCheckoutSteps = (score: number, isDoubleOut: boolean): string[] => {
 
 export default function GameScreen() {
     const router = useRouter();
-    const navigation = useNavigation(); // 2. Inicjalizacja nawigacji
+    const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const { players, setPlayers, settings } = useGame();
 
     const [currentPlayerIdx, setCurrentPlayerIdx] = useState(0);
     const [multiplier, setMultiplier] = useState(1);
     const [isProcessingTurn, setIsProcessingTurn] = useState(false);
-    
-    // 3. Flaga oznaczająca koniec meczu (aby nie blokować wyjścia do statystyk)
     const [isGameFinished, setIsGameFinished] = useState(false);
 
     useEffect(() => {
@@ -119,36 +140,28 @@ export default function GameScreen() {
         }
     }, [players]);
 
-    // 4. --- ZABEZPIECZENIE PRZED WYJŚCIEM ---
+    // ZABEZPIECZENIE PRZED WYJŚCIEM
     useEffect(() => {
         const unsubscribe = navigation.addListener('beforeRemove', (e) => {
-            // Jeśli gra się skończyła (przechodzimy do statystyk), pozwól na to
             if (isGameFinished) {
                 return;
             }
-
-            // Zablokuj domyślne wyjście
             e.preventDefault();
-
-            // Pokaż zapytanie
             Alert.alert(
                 'Przerwać grę?',
                 'Postęp bieżącego meczu zostanie utracony.',
                 [
-                    { text: 'Anuluj', style: 'cancel', onPress: () => {} },
+                    { text: 'Anuluj', style: 'cancel', onPress: () => { } },
                     {
                         text: 'Zakończ',
                         style: 'destructive',
-                        // Jeśli użytkownik potwierdzi, wykonaj akcję wyjścia
                         onPress: () => navigation.dispatch(e.data.action),
                     },
                 ]
             );
         });
-
         return unsubscribe;
     }, [navigation, isGameFinished]);
-    // ----------------------------------------
 
     if (!players || players.length === 0) return null;
 
@@ -158,11 +171,13 @@ export default function GameScreen() {
         return getCheckoutSteps(currentPlayer.score, settings.isDoubleOut);
     }, [currentPlayer.score, settings.isDoubleOut]);
 
-    const nextTurn = useCallback(() => {
+    const nextTurn = useCallback((playersSnapshot?: typeof players) => {
         setMultiplier(1);
         setIsProcessingTurn(false);
 
-        const updatedPlayers = players.map((p, index) => {
+        const currentPlayersList = playersSnapshot || players;
+
+        const updatedPlayers = currentPlayersList.map((p, index) => {
             if (index === currentPlayerIdx) {
                 return {
                     ...p,
@@ -174,16 +189,11 @@ export default function GameScreen() {
         });
 
         setPlayers(updatedPlayers);
-        setCurrentPlayerIdx((prev) => (prev + 1) % players.length);
+        setCurrentPlayerIdx((prev) => (prev + 1) % currentPlayersList.length);
     }, [players, currentPlayerIdx, setPlayers]);
 
-    useEffect(() => {
-        if (currentPlayer.currentTurnThrows.length === 3) {
-            setIsProcessingTurn(true);
-            const timer = setTimeout(() => nextTurn(), 1000);
-            return () => clearTimeout(timer);
-        }
-    }, [currentPlayer.currentTurnThrows, nextTurn]);
+    // --- USUNIĘTO useEffect SPRAWDZAJĄCY 3 RZUTY (powodował konflikty) ---
+    // Logika ta została przeniesiona bezpośrednio do handleThrow (punkt 4)
 
     const startNewLeg = (updatedPlayersSnapshot: any[]) => {
         const resetPlayers = updatedPlayersSnapshot.map(p => ({
@@ -193,7 +203,7 @@ export default function GameScreen() {
             currentTurnThrows: [],
             lastThrows: []
         }));
-        
+
         setPlayers(resetPlayers);
         setMultiplier(1);
         setIsProcessingTurn(false);
@@ -225,7 +235,6 @@ export default function GameScreen() {
 
             const updatedPlayer = { ...p };
             
-            // Inicjalizacja punktów startowych dla tury
             if (updatedPlayer.currentTurnThrows.length === 0) {
                 updatedPlayer.scoreAtStartOfTurn = updatedPlayer.score;
             }
@@ -234,7 +243,6 @@ export default function GameScreen() {
             updatedPlayer.currentTurnThrows = [...updatedPlayer.currentTurnThrows, newThrowData];
             updatedPlayer.throwsHistory = [...updatedPlayer.throwsHistory, points];
 
-            // Logika wygranej i fury
             if (newScore === 0) {
                 if (settings.isDoubleOut && !isDouble) {
                     isBust = true;
@@ -247,9 +255,7 @@ export default function GameScreen() {
                 updatedPlayer.score = newScore;
             }
 
-            // REAKCJA NA BUST
             if (isBust) {
-                // Przywracamy wynik sprzed całej tury (np. owe 16 punktów)
                 updatedPlayer.score = updatedPlayer.scoreAtStartOfTurn;
             }
             
@@ -258,7 +264,7 @@ export default function GameScreen() {
             return updatedPlayer;
         });
 
-        // 1. OBSŁUGA WYGRANEJ (Zostaje z Alertem)
+        // 1. OBSŁUGA WYGRANEJ
         if (isLegWin) {
             const winner = updatedPlayers[currentPlayerIdx];
             winner.legsWon = (winner.legsWon || 0) + 1;
@@ -295,15 +301,13 @@ export default function GameScreen() {
             return;
         }
 
-        // 2. OBSŁUGA BUST (Bez Alertu, z automatycznym przejściem)
+        // 2. OBSŁUGA BUST
         if (isBust) {
             setPlayers(updatedPlayers);
             setMultiplier(1);
-            setIsProcessingTurn(true); // Blokujemy klawiaturę
-            
-            // Automatyczne przejście do następnego gracza po 1,2 sekundy
+            setIsProcessingTurn(true);
             setTimeout(() => {
-                nextTurn();
+                nextTurn(updatedPlayers); 
             }, 1200);
             return;
         }
@@ -311,6 +315,16 @@ export default function GameScreen() {
         // 3. ZWYKŁY RZUT
         setPlayers(updatedPlayers);
         setMultiplier(1);
+
+        // 4. --- NOWOŚĆ: Sprawdzamy, czy to był 3. rzut i zmieniamy turę tutaj ---
+        // Dzięki temu unikamy konfliktów z useEffectem i podwójnego wywoływania
+        const currentPlayerAfterThrow = updatedPlayers[currentPlayerIdx];
+        if (currentPlayerAfterThrow.currentTurnThrows.length === 3) {
+            setIsProcessingTurn(true);
+            setTimeout(() => {
+                nextTurn(updatedPlayers);
+            }, 1000);
+        }
     };
 
     const handleUndo = () => {
@@ -342,14 +356,14 @@ export default function GameScreen() {
                 const updatedPlayer = { ...p };
                 const restoredThrows = [...updatedPlayer.lastThrows];
                 const throwToUndo = restoredThrows.pop();
-                updatedPlayer.throwsHistory.pop(); 
+                updatedPlayer.throwsHistory.pop();
 
                 if (throwToUndo) {
                     updatedPlayer.score += throwToUndo.score;
                 }
 
                 updatedPlayer.currentTurnThrows = restoredThrows;
-                updatedPlayer.lastThrows = []; 
+                updatedPlayer.lastThrows = [];
 
                 return updatedPlayer;
             });
@@ -473,9 +487,9 @@ const styles = StyleSheet.create({
     playerInfo: { alignItems: 'center', marginBottom: 5 },
     label: { color: '#bdc3c7', fontSize: 12, letterSpacing: 1 },
     playerName: { color: '#ecf0f1', fontSize: 28, fontWeight: 'bold' },
-    
+
     matchStats: { color: '#f39c12', fontSize: 14, fontWeight: 'bold', marginTop: 5 },
-    
+
     bigScore: { color: '#fff', fontSize: 80, fontWeight: 'bold', lineHeight: 85 },
 
     turnHistory: { flexDirection: 'row', marginTop: 20, gap: 15 },
