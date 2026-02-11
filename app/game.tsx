@@ -12,115 +12,60 @@ type ThrowType = {
 
 // --- LOGIKA CHECKOUTÓW ---
 const getCheckoutSteps = (score: number, isDoubleOut: boolean): string[] => {
-    if (score < 2 && isDoubleOut) return [];
+    if (score <= 1 && isDoubleOut) return [];
     if (score === 0) return [];
-    if (score > 170 && isDoubleOut) return [];
-    if (score > 180 && !isDoubleOut) return [];
+    if (isDoubleOut && score > 170) return [];
+    if (!isDoubleOut && score > 180) return [];
 
-    const formatThrow = (val: number, mult: number) => {
-        if (val === 25) return mult === 2 ? 'BULL' : '25';
-        const prefix = mult === 3 ? 'T' : mult === 2 ? 'D' : '';
-        return `${prefix}${val}`;
+    type Dart = { value: number; label: string; isDouble?: boolean };
+
+    const darts: Dart[] = [];
+
+    // Single / Double / Triple
+    for (let i = 1; i <= 20; i++) {
+        darts.push({ value: i, label: `${i}` });
+        darts.push({ value: i * 2, label: `D${i}`, isDouble: true });
+        darts.push({ value: i * 3, label: `T${i}` });
+    }
+
+    // Bull
+    darts.push({ value: 25, label: '25' });
+    darts.push({ value: 50, label: 'BULL', isDouble: true });
+
+    const isValidFinish = (remaining: number, last?: Dart) => {
+        if (remaining !== 0) return false;
+        if (!isDoubleOut) return true;
+        return last?.isDouble;
     };
 
-    // Helper do sprawdzania czy liczba > 20 może być rzucona jako D lub T
-    const formatIfPossible = (val: number): string => {
-        if (val <= 20) return val.toString();
-        if (val === 25) return '25';
-        if (val === 50) return 'BULL';
-        if (val <= 60 && val % 3 === 0) return formatThrow(val / 3, 3);
-        if (val <= 40 && val % 2 === 0) return formatThrow(val / 2, 2);
-        return val.toString(); // Zwraca np. "23" jeśli nie da się sformatować (sytuacja rzadka, ale możliwa przy Single Out)
-    };
+    // 1 rzut
+    for (const d1 of darts) {
+        if (isValidFinish(score - d1.value, d1)) return [d1.label];
+    }
 
-    if (!isDoubleOut) {
-        if (score <= 20) return [score.toString()];
-        if (score === 25) return ['25'];
-        if (score === 50) return ['BULL'];
-        if (score <= 40 && score % 2 === 0) return [formatThrow(score / 2, 2)];
-        if (score <= 60 && score % 3 === 0) return [formatThrow(score / 3, 3)];
-
-        if (score > 60) {
-            const steps = [];
-            let current = score;
-            
-            // Zbijamy punktami T20 dopóki się da
-            while (current > 60 && steps.length < 3) {
-                steps.push('T20');
-                current -= 60;
+    // 2 rzuty
+    for (const d1 of darts) {
+        for (const d2 of darts) {
+            if (isValidFinish(score - d1.value - d2.value, d2)) {
+                return [d1.label, d2.label];
             }
+        }
+    }
 
-            if (current > 0 && steps.length < 3) {
-                // Czy resztę da się skończyć 1 rzutem?
-                if (current <= 20) steps.push(current.toString());
-                else if (current <= 40 && current % 2 === 0) steps.push(formatThrow(current / 2, 2));
-                else if (current <= 60 && current % 3 === 0) steps.push(formatThrow(current / 3, 3));
-                else if (current === 25) steps.push('25');
-                else if (current === 50) steps.push('BULL');
-                else {
-                    // Reszta jest trudna (np. 41, 43), musimy rozbić na 2 rzuty
-                    if (steps.length === 1) { // Mamy miejsce na 2 rzuty
-                        const first = current - 20;
-                        // --- POPRAWKA TUTAJ ---
-                        // Zamiast first.toString() używamy formatowania
-                        steps.push(formatIfPossible(first)); 
-                        steps.push('20');
-                    } else {
-                        steps.push('?');
-                    }
+    // 3 rzuty
+    for (const d1 of darts) {
+        for (const d2 of darts) {
+            for (const d3 of darts) {
+                if (isValidFinish(score - d1.value - d2.value - d3.value, d3)) {
+                    return [d1.label, d2.label, d3.label];
                 }
-            }
-            return steps;
-        }
-
-        // Obsługa niskich wyników, które nie są D lub T (np. 23)
-        if (score <= 60) {
-            if (score > 20) {
-                const first = score - 20;
-                // --- I TUTAJ TEŻ ---
-                // Np. dla 41 (Single Out) -> T7 (21) + 20
-                return [formatIfPossible(first), '20'];
-            }
-            if (score > 10) {
-                const first = score - 10;
-                return [first.toString(), '10'];
-            }
-            return ['1', (score - 1).toString()];
-        }
-    }
-
-    // --- Reszta logiki Double Out bez zmian ---
-    const doubles = Array.from({ length: 20 }, (_, i) => 20 - i).map(v => ({ val: v * 2, lbl: `D${v}` }));
-    doubles.unshift({ val: 50, lbl: 'BULL' });
-
-    const d1 = doubles.find(d => d.val === score);
-    if (d1) return [d1.lbl];
-
-    const setters = [
-        { v: 60, l: 'T20' }, { v: 57, l: 'T19' }, { v: 54, l: 'T18' }, { v: 51, l: 'T17' },
-        { v: 50, l: 'BULL' }, { v: 25, l: '25' },
-        ...Array.from({ length: 20 }, (_, i) => ({ v: 20 - i, l: (20 - i).toString() }))
-    ];
-
-    for (let s of setters) {
-        const rem = score - s.v;
-        const d2 = doubles.find(d => d.val === rem);
-        if (d2) return [s.l, d2.lbl];
-    }
-
-    if (score > 60) {
-        for (let s1 of setters.filter(x => x.v >= 15)) {
-            const rem1 = score - s1.v;
-            for (let s2 of setters) {
-                const rem2 = rem1 - s2.v;
-                const d3 = doubles.find(d => d.val === rem2);
-                if (d3) return [s1.l, s2.l, d3.lbl];
             }
         }
     }
 
     return [];
 };
+
 
 
 export default function GameScreen() {
