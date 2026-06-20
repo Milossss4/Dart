@@ -67,7 +67,6 @@ const getCheckoutSteps = (score: number, isDoubleOut: boolean): string[] => {
 };
 
 
-
 export default function GameScreen() {
     const router = useRouter();
     const navigation = useNavigation();
@@ -134,24 +133,38 @@ export default function GameScreen() {
         });
 
         setPlayers(updatedPlayers);
-        setCurrentPlayerIdx((prev) => (prev + 1) % currentPlayersList.length);
+
+        // Znajdź następnego gracza, który JESZCZE NIE SKOŃCZYŁ GRY
+        let nextIdx = (currentPlayerIdx + 1) % currentPlayersList.length;
+        while (updatedPlayers[nextIdx].matchRank && nextIdx !== currentPlayerIdx) {
+            nextIdx = (nextIdx + 1) % currentPlayersList.length;
+        }
+        setCurrentPlayerIdx(nextIdx);
+
     }, [players, currentPlayerIdx, setPlayers]);
 
-    // --- USUNIĘTO useEffect SPRAWDZAJĄCY 3 RZUTY (powodował konflikty) ---
-    // Logika ta została przeniesiona bezpośrednio do handleThrow (punkt 4)
-
     const startNewLeg = (updatedPlayersSnapshot: any[]) => {
-        const resetPlayers = updatedPlayersSnapshot.map(p => ({
-            ...p,
-            score: settings.targetScore,
-            scoreAtStartOfTurn: settings.targetScore,
-            currentTurnThrows: [],
-            lastThrows: []
-        }));
+        const resetPlayers = updatedPlayersSnapshot.map(p => {
+            if (p.matchRank) return p; // Nie resetujemy graczy, którzy już skończyli mecz
+            return {
+                ...p,
+                score: settings.targetScore,
+                scoreAtStartOfTurn: settings.targetScore,
+                currentTurnThrows: [],
+                lastThrows: []
+            };
+        });
 
         setPlayers(resetPlayers);
         setMultiplier(1);
         setIsProcessingTurn(false);
+
+        // Ustaw kolejkę na następnego aktywnego gracza
+        let nextIdx = (currentPlayerIdx + 1) % resetPlayers.length;
+        while (resetPlayers[nextIdx].matchRank && nextIdx !== currentPlayerIdx) {
+            nextIdx = (nextIdx + 1) % resetPlayers.length;
+        }
+        setCurrentPlayerIdx(nextIdx);
     };
 
 
@@ -220,29 +233,71 @@ export default function GameScreen() {
             }
 
             let isSetWin = false;
+            let isMatchWinForPlayer = false;
+
+            // Sprawdzamy czy to koniec seta
             if (winner.legsWon >= settings.legsToWin) {
                 winner.setsWon = (winner.setsWon || 0) + 1;
                 winner.legsWon = 0; 
                 isSetWin = true;
             }
 
+            // Sprawdzamy czy to koniec meczu dla tego gracza
             if (winner.setsWon >= settings.setsToWin) {
+                isMatchWinForPlayer = true;
+                // Przypisz miejsce (np. pierwszy który skończył to #1, itd.)
+                const currentRank = updatedPlayers.filter(p => p.matchRank).length + 1;
+                winner.matchRank = currentRank;
+            }
+
+            // Sprawdzamy ilu graczy zostało w grze
+            const unrankedPlayers = updatedPlayers.filter(p => !p.matchRank);
+
+            // Jeśli został tylko 1 (lub mniej) graczy, GRA SIĘ KOŃCZY CAŁKOWICIE
+            if (unrankedPlayers.length <= 1) {
+                if (unrankedPlayers.length === 1) {
+                    // Automatycznie dajemy mu ostatnie miejsce
+                    unrankedPlayers[0].matchRank = updatedPlayers.filter(p => p.matchRank).length + 1;
+                }
+
                 setIsGameFinished(true); 
                 setPlayers(updatedPlayers);
                 setTimeout(() => { router.replace('/stats'); }, 0);
                 return;
             }
 
-            let title = "LEG DLA CIEBIE!";
-            let message = `${winner.name} kończy lega zejściem ${checkoutScore}!`;
-            if (isSetWin) {
+            // Jeśli gra trwa dalej (dla pozostałych graczy)
+            let title = "";
+            let message = "";
+
+            if (isMatchWinForPlayer) {
+                title = "KONIEC GRY DLA CIEBIE!";
+                message = `${winner.name} zajmuje ${winner.matchRank} miejsce!\nPozostali grają dalej.`;
+            } else if (isSetWin) {
                 title = "SET DLA CIEBIE!";
                 message = `${winner.name} wygrywa seta!`;
+            } else {
+                title = "LEG DLA CIEBIE!";
+                message = `${winner.name} kończy lega zejściem ${checkoutScore}!`;
             }
 
             setPlayers(updatedPlayers);
             setIsProcessingTurn(true);
-            Alert.alert(title, message, [{ text: "Dalej", onPress: () => startNewLeg(updatedPlayers) }]);
+
+            Alert.alert(title, message, [{ 
+                text: "Dalej", 
+                onPress: () => {
+                    const isSingleLegMatch = settings.setsToWin === 1 && settings.legsToWin === 1;
+                    
+                    // Jeśli gracz skończył grę całkowicie, a gramy do zera bez resetów (1 leg, 1 set)
+                    if (isMatchWinForPlayer && isSingleLegMatch) {
+                        nextTurn(updatedPlayers); // Zmieniamy gracza bez resetowania punktów
+                    } else {
+                        // Jeśli to wielolegowy mecz, resetujemy wynik aktywnym graczom na nowy leg
+                        startNewLeg(updatedPlayers);
+                    }
+                } 
+            }]);
             return;
         }
 
@@ -261,8 +316,7 @@ export default function GameScreen() {
         setPlayers(updatedPlayers);
         setMultiplier(1);
 
-        // 4. --- NOWOŚĆ: Sprawdzamy, czy to był 3. rzut i zmieniamy turę tutaj ---
-        // Dzięki temu unikamy konfliktów z useEffectem i podwójnego wywoływania
+        // 4. Zmiana tury na 3. lotce
         const currentPlayerAfterThrow = updatedPlayers[currentPlayerIdx];
         if (currentPlayerAfterThrow.currentTurnThrows.length === 3) {
             setIsProcessingTurn(true);
@@ -290,7 +344,13 @@ export default function GameScreen() {
         }
 
         if (currentPlayer.currentTurnThrows.length === 0) {
-            const prevIdx = (currentPlayerIdx - 1 + players.length) % players.length;
+            let prevIdx = (currentPlayerIdx - 1 + players.length) % players.length;
+            
+            // Omijamy graczy, którzy już skończyli grę
+            while (players[prevIdx].matchRank && prevIdx !== currentPlayerIdx) {
+                prevIdx = (prevIdx - 1 + players.length) % players.length;
+            }
+
             const prevPlayer = players[prevIdx];
 
             if (!prevPlayer.lastThrows || prevPlayer.lastThrows.length === 0) return;
@@ -368,9 +428,6 @@ export default function GameScreen() {
                 <View style={styles.playerInfo}>
                     <Text style={styles.label}>RZUCA TERAZ</Text>
                     <Text style={styles.playerName}>{currentPlayer.name}</Text>
-                    <Text style={styles.matchStats}>
-                        Sety: {currentPlayer.setsWon || 0} / {settings.setsToWin}  |  Legi: {currentPlayer.legsWon || 0} / {settings.legsToWin}
-                    </Text>
                 </View>
 
                 <Text style={styles.bigScore}>{currentPlayer.score}</Text>
@@ -411,10 +468,15 @@ export default function GameScreen() {
                         const throwsString = throwsToDisplay.map((t: ThrowType) => t.label).join('  ');
 
                         return (
-                            <View key={p.id} style={[styles.miniCard, isActive && styles.miniCardActive]}>
+                            <View key={p.id} style={[styles.miniCard, isActive && styles.miniCardActive, p.matchRank && { opacity: 0.5 }]}>
                                 <Text style={styles.miniName}>{p.name}</Text>
-                                <Text style={styles.miniScore}>{p.score}</Text>
-                                <Text style={styles.miniThrows}>{throwsString || '-'}</Text>
+                                {/* Jeśli gracz skończył, wyświetl miejsce, a nie punkty */}
+                                {p.matchRank ? (
+                                    <Text style={[styles.miniScore, { color: '#f1c40f' }]}>#{p.matchRank}</Text>
+                                ) : (
+                                    <Text style={styles.miniScore}>{p.score}</Text>
+                                )}
+                                <Text style={styles.miniThrows}>{p.matchRank ? 'Zakończył grę' : (throwsString || '-')}</Text>
                             </View>
                         );
                     })}
@@ -432,9 +494,7 @@ const styles = StyleSheet.create({
     playerInfo: { alignItems: 'center', marginBottom: 5 },
     label: { color: '#bdc3c7', fontSize: 12, letterSpacing: 1 },
     playerName: { color: '#ecf0f1', fontSize: 28, fontWeight: 'bold' },
-
-    matchStats: { color: '#f39c12', fontSize: 14, fontWeight: 'bold', marginTop: 5 },
-
+    
     bigScore: { color: '#fff', fontSize: 80, fontWeight: 'bold', lineHeight: 85 },
 
     turnHistory: { flexDirection: 'row', marginTop: 20, gap: 15 },
@@ -448,7 +508,7 @@ const styles = StyleSheet.create({
     dartText: { color: '#f1c40f', fontWeight: 'bold', fontSize: 18 },
     dartTextSuggestion: { color: '#95a5a6', fontStyle: 'italic', fontWeight: 'normal' },
 
-    othersSection: { height: 85, backgroundColor: '#222', borderBottomWidth: 1, borderColor: '#333' },
+    othersSection: { height: 75, backgroundColor: '#222', borderBottomWidth: 1, borderColor: '#333' },
     miniCard: { width: 100, justifyContent: 'center', alignItems: 'center', borderRightWidth: 1, borderColor: '#444', padding: 5 },
     miniCardActive: { backgroundColor: '#34495e' },
     miniName: { color: '#aaa', fontSize: 12, marginBottom: 2 },

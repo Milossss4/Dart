@@ -1,38 +1,40 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { 
-  FlatList, 
-  StyleSheet, 
-  Text, 
-  TouchableOpacity, 
-  View, 
-  StatusBar 
+import {
+  FlatList,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useGame } from '../context/GameContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useGame } from '../context/GameContext';
 
 export default function StatsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { players } = useGame();
 
-  // Obliczanie średniej (3 lotki)
   const calculateAvg = (player: any) => {
     if (!player.throwsHistory || player.throwsHistory.length === 0) return "0.00";
     const total = player.throwsHistory.reduce((a: number, b: number) => a + b, 0);
     return ((total / player.throwsHistory.length) * 3).toFixed(2);
   };
 
-  // Znajdź zwycięzcę (osoba z największą liczbą setów)
-  const winnerId = players.reduce((prev, current) => {
-    return (prev.setsWon || 0) > (current.setsWon || 0) ? prev : current;
-  }, players[0]).id;
+  // Sortujemy graczy po miejscu (matchRank). Gracze bez matchRank spadają na koniec z wagą 99.
+  const sortedPlayers = [...players].sort((a, b) => {
+      const rankA = a.matchRank || 99;
+      const rankB = b.matchRank || 99;
+      return rankA - rankB;
+  });
 
-  const renderPlayerStats = ({ item, index }: { item: any, index: number }) => {
-    const isWinner = item.id === winnerId;
+  const renderPlayerStats = ({ item }: { item: any }) => {
+    // Jeśli z jakiegoś powodu nie dokończyli, a przerwano grę
+    const rank = item.matchRank || '-'; 
+    const isWinner = rank === 1;
     const avg = calculateAvg(item);
-    // Zakładamy, że highestCheckout może być dodane w przyszłości, póki co wyświetlamy bezpiecznie
     const hiOut = item.highestCheckout || '-'; 
 
     return (
@@ -44,37 +46,32 @@ export default function StatsScreen() {
              {isWinner ? (
                 <Ionicons name="trophy" size={24} color="#f1c40f" />
              ) : (
-                <Text style={styles.rankText}>#{index + 1}</Text>
+                <Text style={styles.rankText}>#{rank}</Text>
              )}
           </View>
           <Text style={styles.name}>{item.name}</Text>
           {isWinner && <Text style={styles.winnerText}>ZWYCIĘZCA</Text>}
         </View>
 
-        {/* Separator */}
         <View style={styles.separator} />
 
         {/* Siatka Statystyk */}
         <View style={styles.statsGrid}>
-          {/* Średnia */}
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>Średnia</Text>
             <Text style={styles.statValue}>{avg}</Text>
           </View>
 
-          {/* Hi-Out (Najwyższe zamknięcie) */}
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>Hi-Out</Text>
             <Text style={styles.statValue}>{hiOut}</Text>
           </View>
 
-          {/* Wygrane Sety */}
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>Sety</Text>
             <Text style={[styles.statValue, { color: '#e67e22' }]}>{item.setsWon || 0}</Text>
           </View>
 
-          {/* Wygrane Legi */}
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>Legi</Text>
             <Text style={[styles.statValue, { color: '#2ecc71' }]}>{item.legsWon || 0}</Text>
@@ -94,7 +91,7 @@ export default function StatsScreen() {
       </View>
 
       <FlatList 
-        data={players}
+        data={sortedPlayers}
         keyExtractor={(p) => p.id.toString()}
         renderItem={renderPlayerStats}
         contentContainerStyle={styles.listContent}
@@ -134,8 +131,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20
   },
-  
-  // Karta Gracza
   card: {
     backgroundColor: '#333',
     borderRadius: 15,
@@ -146,11 +141,9 @@ const styles = StyleSheet.create({
   },
   winnerCard: {
     borderColor: '#f1c40f',
-    backgroundColor: '#2c2c2c', // Nieco inny odcień dla zwycięzcy
+    backgroundColor: '#2c2c2c',
     borderWidth: 2
   },
-  
-  // Nagłówek Karty
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -183,14 +176,11 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     textTransform: 'uppercase'
   },
-
   separator: {
     height: 1,
     backgroundColor: '#444',
     marginBottom: 10
   },
-
-  // Siatka Statystyk
   statsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -210,8 +200,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold'
   },
-
-  // Footer
   footer: {
     padding: 20,
     borderTopWidth: 1,
