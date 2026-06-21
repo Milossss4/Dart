@@ -245,28 +245,35 @@ export default function GameScreen() {
             // Sprawdzamy czy to koniec meczu dla tego gracza
             if (winner.setsWon >= settings.setsToWin) {
                 isMatchWinForPlayer = true;
-                // Przypisz miejsce (np. pierwszy który skończył to #1, itd.)
                 const currentRank = updatedPlayers.filter(p => p.matchRank).length + 1;
                 winner.matchRank = currentRank;
             }
 
             // Sprawdzamy ilu graczy zostało w grze
             const unrankedPlayers = updatedPlayers.filter(p => !p.matchRank);
+            
+            // --- POPRAWKA: Rozróżnienie Solo vs Multiplayer ---
+            let isOverallGameFinished = false;
 
-            // Jeśli został tylko 1 (lub mniej) graczy, GRA SIĘ KOŃCZY CAŁKOWICIE
-            if (unrankedPlayers.length <= 1) {
-                if (unrankedPlayers.length === 1) {
-                    // Automatycznie dajemy mu ostatnie miejsce
-                    unrankedPlayers[0].matchRank = updatedPlayers.filter(p => p.matchRank).length + 1;
-                }
+            if (unrankedPlayers.length === 0) {
+                // Sytuacja: Ostatni gracz (lub jedyny gracz) właśnie skończył grę.
+                isOverallGameFinished = true;
+            } else if (players.length > 1 && unrankedPlayers.length === 1) {
+                // Sytuacja: W grze multiplayer został tylko 1 gracz na planszy.
+                // Automatycznie dajemy mu ostatnie miejsce i kończymy grę.
+                unrankedPlayers[0].matchRank = updatedPlayers.filter(p => p.matchRank).length + 1;
+                isOverallGameFinished = true;
+            }
 
+            if (isOverallGameFinished) {
                 setIsGameFinished(true); 
                 setPlayers(updatedPlayers);
                 setTimeout(() => { router.replace('/stats'); }, 0);
                 return;
             }
+            // ---------------------------------------------------
 
-            // Jeśli gra trwa dalej (dla pozostałych graczy)
+            // Jeśli gra trwa dalej (dla gracza solo w nowym legu, lub dla reszty graczy)
             let title = "";
             let message = "";
 
@@ -289,11 +296,11 @@ export default function GameScreen() {
                 onPress: () => {
                     const isSingleLegMatch = settings.setsToWin === 1 && settings.legsToWin === 1;
                     
-                    // Jeśli gracz skończył grę całkowicie, a gramy do zera bez resetów (1 leg, 1 set)
+                    // Zmiana tury bez resetu, ALE TYLKO jeśli jesteśmy w multiplayerze i tylko ten gracz skończył
                     if (isMatchWinForPlayer && isSingleLegMatch) {
-                        nextTurn(updatedPlayers); // Zmieniamy gracza bez resetowania punktów
+                        nextTurn(updatedPlayers); 
                     } else {
-                        // Jeśli to wielolegowy mecz, resetujemy wynik aktywnym graczom na nowy leg
+                        // W wielolegowym meczu (solo lub multi) resetujemy wynik na nowy leg/set
                         startNewLeg(updatedPlayers);
                     }
                 } 
@@ -316,7 +323,7 @@ export default function GameScreen() {
         setPlayers(updatedPlayers);
         setMultiplier(1);
 
-        // 4. Zmiana tury na 3. lotce
+        // 4. --- Zmiana tury na 3. lotce ---
         const currentPlayerAfterThrow = updatedPlayers[currentPlayerIdx];
         if (currentPlayerAfterThrow.currentTurnThrows.length === 3) {
             setIsProcessingTurn(true);
@@ -428,6 +435,9 @@ export default function GameScreen() {
                 <View style={styles.playerInfo}>
                     <Text style={styles.label}>RZUCA TERAZ</Text>
                     <Text style={styles.playerName}>{currentPlayer.name}</Text>
+                    <Text style={styles.matchStats}>
+                        Sety: {currentPlayer.setsWon || 0} / {settings.setsToWin}  |  Legi: {currentPlayer.legsWon || 0} / {settings.legsToWin}
+                    </Text>
                 </View>
 
                 <Text style={styles.bigScore}>{currentPlayer.score}</Text>
@@ -494,7 +504,9 @@ const styles = StyleSheet.create({
     playerInfo: { alignItems: 'center', marginBottom: 5 },
     label: { color: '#bdc3c7', fontSize: 12, letterSpacing: 1 },
     playerName: { color: '#ecf0f1', fontSize: 28, fontWeight: 'bold' },
-    
+
+    matchStats: { color: '#f39c12', fontSize: 14, fontWeight: 'bold', marginTop: 5 },
+
     bigScore: { color: '#fff', fontSize: 80, fontWeight: 'bold', lineHeight: 85 },
 
     turnHistory: { flexDirection: 'row', marginTop: 20, gap: 15 },
